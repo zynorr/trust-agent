@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
@@ -15,7 +16,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *      - Ratings are stored on-chain with average score calculation
  *      - Prevents double rating from the same address
  */
-contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
+contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard {
     /// @notice Maximum rating value
     uint8 public constant MAX_RATING = 5;
 
@@ -122,7 +123,12 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
      * @param metadataURI The URI pointing to the agent's profile metadata
      * @return agentId The token ID of the newly registered agent
      */
-    function registerAgent(address to, string memory metadataURI) external onlyRole(REGISTRAR_ROLE) returns (uint256) {
+    function registerAgent(address to, string memory metadataURI)
+        external
+        onlyRole(REGISTRAR_ROLE)
+        whenNotPaused
+        returns (uint256)
+    {
         if (to == address(0)) {
             revert ERC721InvalidReceiver(address(0));
         }
@@ -145,7 +151,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
      * @param agentId The token ID of the agent to rate
      * @param rating The rating value (must be between MIN_RATING and MAX_RATING)
      */
-    function submitRating(uint256 agentId, uint8 rating) external nonReentrant {
+    function submitRating(uint256 agentId, uint8 rating) external nonReentrant whenNotPaused {
         // Validate agent exists
         if (_ownerOf(agentId) == address(0)) {
             revert AgentNotFound(agentId);
@@ -251,7 +257,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
      * @param agentId The token ID of the agent
      * @param newMetadataURI The replacement metadata URI
      */
-    function updateAgentMetadata(uint256 agentId, string memory newMetadataURI) external {
+    function updateAgentMetadata(uint256 agentId, string memory newMetadataURI) external whenNotPaused {
         address owner = _ownerOf(agentId);
         if (owner == address(0)) {
             revert AgentNotFound(agentId);
@@ -273,6 +279,20 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
         uint256 previousCooldown = ratingCooldown;
         ratingCooldown = newCooldown;
         emit RatingCooldownUpdated(previousCooldown, newCooldown);
+    }
+
+    /**
+     * @notice Pause state-changing protocol actions
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @notice Resume state-changing protocol actions
+     */
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     /**

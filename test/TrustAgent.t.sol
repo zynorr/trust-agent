@@ -90,6 +90,12 @@ contract TrustAgentTest is Test {
         assertEq(agentId, 0);
     }
 
+    function test_RegisterAgent_RevertWhenPaused() public {
+        trustAgent.pause();
+        vm.expectRevert();
+        trustAgent.registerAgent(agentOwner, METADATA_URI);
+    }
+
     // ============ Rating Tests ============
 
     function test_SubmitRating() public {
@@ -225,6 +231,14 @@ contract TrustAgentTest is Test {
         assertTrue(trustAgent.hasAddressRated(agentId2, user1));
     }
 
+    function test_SubmitRating_RevertWhenPaused() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        trustAgent.pause();
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.submitRating(agentId, 5);
+    }
+
     // ============ Read Function Tests ============
 
     function test_GetAgentDetails() public {
@@ -334,6 +348,14 @@ contract TrustAgentTest is Test {
         trustAgent.updateAgentMetadata(agentId, "https://example.com/agent/unauthorized");
     }
 
+    function test_UpdateAgentMetadata_RevertWhenPaused() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        trustAgent.pause();
+        vm.prank(agentOwner);
+        vm.expectRevert();
+        trustAgent.updateAgentMetadata(agentId, "https://example.com/agent/paused");
+    }
+
     function test_SetRatingCooldown_ByOwner() public {
         uint256 previousCooldown = trustAgent.ratingCooldown();
         uint256 newCooldown = 60;
@@ -349,6 +371,27 @@ contract TrustAgentTest is Test {
         vm.prank(user1);
         vm.expectRevert();
         trustAgent.setRatingCooldown(60);
+    }
+
+    function test_PauseAndUnpause_ByOwner() public {
+        assertFalse(trustAgent.paused());
+        trustAgent.pause();
+        assertTrue(trustAgent.paused());
+        trustAgent.unpause();
+        assertFalse(trustAgent.paused());
+    }
+
+    function test_Pause_RevertIfNotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.pause();
+    }
+
+    function test_Unpause_RevertIfNotOwner() public {
+        trustAgent.pause();
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.unpause();
     }
 
     // ============ Edge Cases ============
