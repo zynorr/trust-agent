@@ -21,6 +21,7 @@ contract TrustAgentTest is Test {
 
     event RatingSubmitted(uint256 indexed agentId, address indexed rater, uint8 rating, uint256 newAverage);
     event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
+    event RatingCooldownUpdated(uint256 previousCooldown, uint256 newCooldown);
 
     function setUp() public {
         owner = address(this);
@@ -197,6 +198,33 @@ contract TrustAgentTest is Test {
         assertEq(averageScore, 300); // (1+2+3+4+5)/5 = 3.00 * 100 = 300
     }
 
+    function test_SubmitRating_EnforcesCooldownAcrossAgents() public {
+        uint256 agentId1 = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        uint256 agentId2 = trustAgent.registerAgent(user2, "https://example.com/agent/2");
+
+        vm.prank(user1);
+        trustAgent.submitRating(agentId1, 5);
+
+        uint256 nextAllowedAt = block.timestamp + trustAgent.ratingCooldown();
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.RatingCooldownActive.selector, user1, nextAllowedAt));
+        trustAgent.submitRating(agentId2, 4);
+    }
+
+    function test_SubmitRating_AllowsAfterCooldown() public {
+        uint256 agentId1 = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        uint256 agentId2 = trustAgent.registerAgent(user2, "https://example.com/agent/2");
+
+        vm.prank(user1);
+        trustAgent.submitRating(agentId1, 5);
+
+        vm.warp(block.timestamp + trustAgent.ratingCooldown());
+
+        vm.prank(user1);
+        trustAgent.submitRating(agentId2, 4);
+        assertTrue(trustAgent.hasAddressRated(agentId2, user1));
+    }
+
     // ============ Read Function Tests ============
 
     function test_GetAgentDetails() public {
@@ -306,6 +334,23 @@ contract TrustAgentTest is Test {
         trustAgent.updateAgentMetadata(agentId, "https://example.com/agent/unauthorized");
     }
 
+    function test_SetRatingCooldown_ByOwner() public {
+        uint256 previousCooldown = trustAgent.ratingCooldown();
+        uint256 newCooldown = 60;
+
+        vm.expectEmit(false, false, false, true);
+        emit RatingCooldownUpdated(previousCooldown, newCooldown);
+
+        trustAgent.setRatingCooldown(newCooldown);
+        assertEq(trustAgent.ratingCooldown(), newCooldown);
+    }
+
+    function test_SetRatingCooldown_RevertIfNotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.setRatingCooldown(60);
+    }
+
     // ============ Edge Cases ============
 
     function test_MultipleAgents_MultipleRatings() public {
@@ -322,6 +367,7 @@ contract TrustAgentTest is Test {
         // Rate agent2
         vm.prank(agentOwner);
         trustAgent.submitRating(agentId2, 3);
+        vm.warp(block.timestamp + trustAgent.ratingCooldown());
         vm.prank(user2);
         trustAgent.submitRating(agentId2, 5);
 

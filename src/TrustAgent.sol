@@ -28,6 +28,12 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
     /// @notice Role allowed to register new agents
     bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR_ROLE");
 
+    /// @notice Default cooldown between ratings from the same address
+    uint256 public constant DEFAULT_RATING_COOLDOWN = 5 minutes;
+
+    /// @notice Minimum delay (in seconds) between ratings by the same address
+    uint256 public ratingCooldown;
+
     /// @notice Agent information structure
     struct AgentInfo {
         address creator; // Address that created/registered the agent
@@ -42,6 +48,9 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
     /// @notice Mapping from (agentId => rater) => hasRated
     /// @dev Prevents the same address from rating the same agent twice
     mapping(uint256 => mapping(address => bool)) public hasRated;
+
+    /// @notice Tracks last rating timestamp per rater
+    mapping(address => uint256) public lastRatingAt;
 
     /// @notice Event emitted when a new agent is registered
     /// @param agentId The token ID of the registered agent
@@ -61,6 +70,11 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
     /// @param updatedBy The address that performed the update
     /// @param newMetadataURI The new metadata URI
     event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
+
+    /// @notice Event emitted when rating cooldown is updated
+    /// @param previousCooldown Previous cooldown in seconds
+    /// @param newCooldown New cooldown in seconds
+    event RatingCooldownUpdated(uint256 previousCooldown, uint256 newCooldown);
 
     /// @notice Custom error for invalid rating value
     /// @param rating The invalid rating value provided
@@ -84,6 +98,11 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
     /// @param caller The address attempting the update
     error UnauthorizedMetadataUpdate(uint256 agentId, address caller);
 
+    /// @notice Custom error for active cooldown between ratings
+    /// @param rater Address attempting to rate
+    /// @param nextAllowedAt Timestamp when rating becomes allowed
+    error RatingCooldownActive(address rater, uint256 nextAllowedAt);
+
     /**
      * @notice Constructor initializes the contract
      * @param name The name of the ERC721 token
@@ -91,6 +110,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
      */
     constructor(string memory name, string memory symbol) ERC721(name, symbol) Ownable(msg.sender) {
         _agentIdCounter = 0;
+        ratingCooldown = DEFAULT_RATING_COOLDOWN;
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(REGISTRAR_ROLE, msg.sender);
     }
@@ -146,11 +166,18 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
             revert AlreadyRated(agentId, msg.sender);
         }
 
+        // Enforce cooldown between ratings by the same address
+        uint256 nextAllowedAt = lastRatingAt[msg.sender] + ratingCooldown;
+        if (lastRatingAt[msg.sender] != 0 && block.timestamp < nextAllowedAt) {
+            revert RatingCooldownActive(msg.sender, nextAllowedAt);
+        }
+
         // Update agent reputation
         AgentInfo storage agent = agents[agentId];
         agent.totalRatings++;
         agent.totalScore += rating;
         hasRated[agentId][msg.sender] = true;
+        lastRatingAt[msg.sender] = block.timestamp;
 
         // Calculate new average (multiplied by 100 for precision)
         uint256 newAverage = (agent.totalScore * 100) / agent.totalRatings;
@@ -236,6 +263,16 @@ contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
 
         agents[agentId].metadataURI = newMetadataURI;
         emit AgentMetadataUpdated(agentId, msg.sender, newMetadataURI);
+    }
+
+    /**
+     * @notice Update cooldown between ratings by the same address
+     * @param newCooldown New cooldown in seconds
+     */
+    function setRatingCooldown(uint256 newCooldown) external onlyOwner {
+        uint256 previousCooldown = ratingCooldown;
+        ratingCooldown = newCooldown;
+        emit RatingCooldownUpdated(previousCooldown, newCooldown);
     }
 
     /**
