@@ -22,6 +22,7 @@ contract TrustAgentTest is Test {
     event RatingSubmitted(uint256 indexed agentId, address indexed rater, uint8 rating, uint256 newAverage);
     event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
     event RatingCooldownUpdated(uint256 previousCooldown, uint256 newCooldown);
+    event MaxMetadataURILengthUpdated(uint256 previousLimit, uint256 newLimit);
 
     function setUp() public {
         owner = address(this);
@@ -73,6 +74,21 @@ contract TrustAgentTest is Test {
     function test_RegisterAgent_RevertIfZeroAddress() public {
         vm.expectRevert();
         trustAgent.registerAgent(address(0), METADATA_URI);
+    }
+
+    function test_RegisterAgent_RevertIfMetadataURIEmpty() public {
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.InvalidMetadataURI.selector));
+        trustAgent.registerAgent(agentOwner, "");
+    }
+
+    function test_RegisterAgent_RevertIfMetadataURIToolong() public {
+        string memory longURI = new string(trustAgent.maxMetadataURILength() + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TrustAgent.MetadataURITooLong.selector, bytes(longURI).length, trustAgent.maxMetadataURILength()
+            )
+        );
+        trustAgent.registerAgent(agentOwner, longURI);
     }
 
     function test_RegisterAgent_RevertIfCallerMissingRegistrarRole() public {
@@ -348,6 +364,25 @@ contract TrustAgentTest is Test {
         trustAgent.updateAgentMetadata(agentId, "https://example.com/agent/unauthorized");
     }
 
+    function test_UpdateAgentMetadata_RevertIfEmptyURI() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.prank(agentOwner);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.InvalidMetadataURI.selector));
+        trustAgent.updateAgentMetadata(agentId, "");
+    }
+
+    function test_UpdateAgentMetadata_RevertIfURIToolong() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        string memory longURI = new string(trustAgent.maxMetadataURILength() + 1);
+        vm.prank(agentOwner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TrustAgent.MetadataURITooLong.selector, bytes(longURI).length, trustAgent.maxMetadataURILength()
+            )
+        );
+        trustAgent.updateAgentMetadata(agentId, longURI);
+    }
+
     function test_UpdateAgentMetadata_RevertWhenPaused() public {
         uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
         trustAgent.pause();
@@ -371,6 +406,28 @@ contract TrustAgentTest is Test {
         vm.prank(user1);
         vm.expectRevert();
         trustAgent.setRatingCooldown(60);
+    }
+
+    function test_SetMaxMetadataURILength_ByOwner() public {
+        uint256 previousLimit = trustAgent.maxMetadataURILength();
+        uint256 newLimit = 512;
+
+        vm.expectEmit(false, false, false, true);
+        emit MaxMetadataURILengthUpdated(previousLimit, newLimit);
+
+        trustAgent.setMaxMetadataURILength(newLimit);
+        assertEq(trustAgent.maxMetadataURILength(), newLimit);
+    }
+
+    function test_SetMaxMetadataURILength_RevertIfZero() public {
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.InvalidMetadataURI.selector));
+        trustAgent.setMaxMetadataURILength(0);
+    }
+
+    function test_SetMaxMetadataURILength_RevertIfNotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.setMaxMetadataURILength(128);
     }
 
     function test_PauseAndUnpause_ByOwner() public {

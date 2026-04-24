@@ -35,6 +35,12 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @notice Minimum delay (in seconds) between ratings by the same address
     uint256 public ratingCooldown;
 
+    /// @notice Default maximum length for metadata URI strings
+    uint256 public constant DEFAULT_MAX_METADATA_URI_LENGTH = 256;
+
+    /// @notice Maximum allowed metadata URI length
+    uint256 public maxMetadataURILength;
+
     /// @notice Agent information structure
     struct AgentInfo {
         address creator; // Address that created/registered the agent
@@ -77,6 +83,11 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @param newCooldown New cooldown in seconds
     event RatingCooldownUpdated(uint256 previousCooldown, uint256 newCooldown);
 
+    /// @notice Event emitted when metadata URI length limit is updated
+    /// @param previousLimit Previous max URI length
+    /// @param newLimit New max URI length
+    event MaxMetadataURILengthUpdated(uint256 previousLimit, uint256 newLimit);
+
     /// @notice Custom error for invalid rating value
     /// @param rating The invalid rating value provided
     error InvalidRating(uint8 rating);
@@ -104,6 +115,14 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @param nextAllowedAt Timestamp when rating becomes allowed
     error RatingCooldownActive(address rater, uint256 nextAllowedAt);
 
+    /// @notice Custom error for invalid metadata URI
+    error InvalidMetadataURI();
+
+    /// @notice Custom error for metadata URI exceeding configured max length
+    /// @param providedLength Length supplied by caller
+    /// @param maxLength Configured maximum length
+    error MetadataURITooLong(uint256 providedLength, uint256 maxLength);
+
     /**
      * @notice Constructor initializes the contract
      * @param name The name of the ERC721 token
@@ -112,6 +131,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     constructor(string memory name, string memory symbol) ERC721(name, symbol) Ownable(msg.sender) {
         _agentIdCounter = 0;
         ratingCooldown = DEFAULT_RATING_COOLDOWN;
+        maxMetadataURILength = DEFAULT_MAX_METADATA_URI_LENGTH;
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(REGISTRAR_ROLE, msg.sender);
     }
@@ -132,6 +152,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         if (to == address(0)) {
             revert ERC721InvalidReceiver(address(0));
         }
+        _validateMetadataURI(metadataURI);
 
         uint256 agentId = _agentIdCounter;
         _agentIdCounter++;
@@ -266,6 +287,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         if (msg.sender != owner && msg.sender != agents[agentId].creator) {
             revert UnauthorizedMetadataUpdate(agentId, msg.sender);
         }
+        _validateMetadataURI(newMetadataURI);
 
         agents[agentId].metadataURI = newMetadataURI;
         emit AgentMetadataUpdated(agentId, msg.sender, newMetadataURI);
@@ -279,6 +301,19 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         uint256 previousCooldown = ratingCooldown;
         ratingCooldown = newCooldown;
         emit RatingCooldownUpdated(previousCooldown, newCooldown);
+    }
+
+    /**
+     * @notice Update the maximum allowed metadata URI length
+     * @param newLimit New length limit in bytes (must be > 0)
+     */
+    function setMaxMetadataURILength(uint256 newLimit) external onlyOwner {
+        if (newLimit == 0) {
+            revert InvalidMetadataURI();
+        }
+        uint256 previousLimit = maxMetadataURILength;
+        maxMetadataURILength = newLimit;
+        emit MaxMetadataURILengthUpdated(previousLimit, newLimit);
     }
 
     /**
@@ -328,5 +363,18 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
      */
     function supportsInterface(bytes4 interfaceId) public view override(ERC721, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * @notice Validate metadata URI for emptiness and configured max length
+     */
+    function _validateMetadataURI(string memory metadataURI) internal view {
+        bytes memory uriBytes = bytes(metadataURI);
+        if (uriBytes.length == 0) {
+            revert InvalidMetadataURI();
+        }
+        if (uriBytes.length > maxMetadataURILength) {
+            revert MetadataURITooLong(uriBytes.length, maxMetadataURILength);
+        }
     }
 }
