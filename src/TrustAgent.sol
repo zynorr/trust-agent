@@ -59,6 +59,9 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @notice Tracks last rating timestamp per rater
     mapping(address => uint256) public lastRatingAt;
 
+    /// @notice Tracks whether an agent is active and can receive ratings
+    mapping(uint256 => bool) public isAgentActive;
+
     /// @notice Event emitted when a new agent is registered
     /// @param agentId The token ID of the registered agent
     /// @param creator The address that created the agent
@@ -87,6 +90,12 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @param previousLimit Previous max URI length
     /// @param newLimit New max URI length
     event MaxMetadataURILengthUpdated(uint256 previousLimit, uint256 newLimit);
+
+    /// @notice Event emitted when an agent's active status changes
+    /// @param agentId The token ID of the agent
+    /// @param updatedBy The address that updated the status
+    /// @param isActive New active status for the agent
+    event AgentStatusUpdated(uint256 indexed agentId, address indexed updatedBy, bool isActive);
 
     /// @notice Custom error for invalid rating value
     /// @param rating The invalid rating value provided
@@ -123,6 +132,15 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
     /// @param maxLength Configured maximum length
     error MetadataURITooLong(uint256 providedLength, uint256 maxLength);
 
+    /// @notice Custom error for unauthorized status update
+    /// @param agentId Agent being updated
+    /// @param caller Address attempting update
+    error UnauthorizedAgentStatusUpdate(uint256 agentId, address caller);
+
+    /// @notice Custom error when trying to rate an inactive agent
+    /// @param agentId Inactive agent token ID
+    error AgentInactive(uint256 agentId);
+
     /**
      * @notice Constructor initializes the contract
      * @param name The name of the ERC721 token
@@ -158,6 +176,7 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         _agentIdCounter++;
 
         agents[agentId] = AgentInfo({creator: msg.sender, metadataURI: metadataURI, totalRatings: 0, totalScore: 0});
+        isAgentActive[agentId] = true;
 
         _safeMint(to, agentId);
 
@@ -181,6 +200,10 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         // Validate rating range
         if (rating < MIN_RATING || rating > MAX_RATING) {
             revert InvalidRating(rating);
+        }
+
+        if (!isAgentActive[agentId]) {
+            revert AgentInactive(agentId);
         }
 
         // Prevent rating own agent (owner and creator)
@@ -314,6 +337,25 @@ contract TrustAgent is ERC721, Ownable, AccessControl, Pausable, ReentrancyGuard
         uint256 previousLimit = maxMetadataURILength;
         maxMetadataURILength = newLimit;
         emit MaxMetadataURILengthUpdated(previousLimit, newLimit);
+    }
+
+    /**
+     * @notice Update whether an agent can receive new ratings
+     * @dev Only the current owner or original creator can update status
+     * @param agentId The token ID of the agent
+     * @param active New active status
+     */
+    function setAgentActive(uint256 agentId, bool active) external whenNotPaused {
+        address owner = _ownerOf(agentId);
+        if (owner == address(0)) {
+            revert AgentNotFound(agentId);
+        }
+        if (msg.sender != owner && msg.sender != agents[agentId].creator) {
+            revert UnauthorizedAgentStatusUpdate(agentId, msg.sender);
+        }
+
+        isAgentActive[agentId] = active;
+        emit AgentStatusUpdated(agentId, msg.sender, active);
     }
 
     /**

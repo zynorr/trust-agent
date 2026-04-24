@@ -23,6 +23,7 @@ contract TrustAgentTest is Test {
     event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
     event RatingCooldownUpdated(uint256 previousCooldown, uint256 newCooldown);
     event MaxMetadataURILengthUpdated(uint256 previousLimit, uint256 newLimit);
+    event AgentStatusUpdated(uint256 indexed agentId, address indexed updatedBy, bool isActive);
 
     function setUp() public {
         owner = address(this);
@@ -42,6 +43,7 @@ contract TrustAgentTest is Test {
         assertEq(agentId, 0);
         assertEq(trustAgent.ownerOf(agentId), agentOwner);
         assertEq(trustAgent.tokenURI(agentId), METADATA_URI);
+        assertTrue(trustAgent.isAgentActive(agentId));
         assertEq(trustAgent.getTotalAgents(), 1);
     }
 
@@ -255,6 +257,16 @@ contract TrustAgentTest is Test {
         trustAgent.submitRating(agentId, 5);
     }
 
+    function test_SubmitRating_RevertIfAgentInactive() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.prank(agentOwner);
+        trustAgent.setAgentActive(agentId, false);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.AgentInactive.selector, agentId));
+        trustAgent.submitRating(agentId, 5);
+    }
+
     // ============ Read Function Tests ============
 
     function test_GetAgentDetails() public {
@@ -449,6 +461,45 @@ contract TrustAgentTest is Test {
         vm.prank(user1);
         vm.expectRevert();
         trustAgent.unpause();
+    }
+
+    function test_SetAgentActive_ByOwner() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.expectEmit(true, true, false, true);
+        emit AgentStatusUpdated(agentId, agentOwner, false);
+
+        vm.prank(agentOwner);
+        trustAgent.setAgentActive(agentId, false);
+        assertFalse(trustAgent.isAgentActive(agentId));
+    }
+
+    function test_SetAgentActive_ByCreator() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.expectEmit(true, true, false, true);
+        emit AgentStatusUpdated(agentId, owner, false);
+
+        trustAgent.setAgentActive(agentId, false);
+        assertFalse(trustAgent.isAgentActive(agentId));
+    }
+
+    function test_SetAgentActive_RevertIfUnauthorized() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.UnauthorizedAgentStatusUpdate.selector, agentId, user1));
+        trustAgent.setAgentActive(agentId, false);
+    }
+
+    function test_SetAgentActive_RevertIfAgentNotFound() public {
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.AgentNotFound.selector, 999));
+        trustAgent.setAgentActive(999, false);
+    }
+
+    function test_SetAgentActive_RevertWhenPaused() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        trustAgent.pause();
+        vm.prank(agentOwner);
+        vm.expectRevert();
+        trustAgent.setAgentActive(agentId, false);
     }
 
     // ============ Edge Cases ============
