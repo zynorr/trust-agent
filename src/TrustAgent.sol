@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
@@ -14,7 +15,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *      - Ratings are stored on-chain with average score calculation
  *      - Prevents double rating from the same address
  */
-contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
+contract TrustAgent is ERC721, Ownable, AccessControl, ReentrancyGuard {
     /// @notice Maximum rating value
     uint8 public constant MAX_RATING = 5;
 
@@ -23,6 +24,9 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
 
     /// @notice Counter for agent token IDs
     uint256 private _agentIdCounter;
+
+    /// @notice Role allowed to register new agents
+    bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR_ROLE");
 
     /// @notice Agent information structure
     struct AgentInfo {
@@ -52,6 +56,12 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
     /// @param newAverage The new average rating after this submission
     event RatingSubmitted(uint256 indexed agentId, address indexed rater, uint8 rating, uint256 newAverage);
 
+    /// @notice Event emitted when agent metadata is updated
+    /// @param agentId The token ID of the updated agent
+    /// @param updatedBy The address that performed the update
+    /// @param newMetadataURI The new metadata URI
+    event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
+
     /// @notice Custom error for invalid rating value
     /// @param rating The invalid rating value provided
     error InvalidRating(uint8 rating);
@@ -69,6 +79,11 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
     /// @param agentId The agent being rated
     error CannotRateOwnAgent(uint256 agentId);
 
+    /// @notice Custom error for unauthorized metadata update
+    /// @param agentId The agent being updated
+    /// @param caller The address attempting the update
+    error UnauthorizedMetadataUpdate(uint256 agentId, address caller);
+
     /**
      * @notice Constructor initializes the contract
      * @param name The name of the ERC721 token
@@ -76,6 +91,8 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
      */
     constructor(string memory name, string memory symbol) ERC721(name, symbol) Ownable(msg.sender) {
         _agentIdCounter = 0;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(REGISTRAR_ROLE, msg.sender);
     }
 
     /**
@@ -85,7 +102,7 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
      * @param metadataURI The URI pointing to the agent's profile metadata
      * @return agentId The token ID of the newly registered agent
      */
-    function registerAgent(address to, string memory metadataURI) external returns (uint256) {
+    function registerAgent(address to, string memory metadataURI) external onlyRole(REGISTRAR_ROLE) returns (uint256) {
         if (to == address(0)) {
             revert ERC721InvalidReceiver(address(0));
         }
@@ -119,8 +136,8 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
             revert InvalidRating(rating);
         }
 
-        // Prevent rating own agent
-        if (_ownerOf(agentId) == msg.sender) {
+        // Prevent rating own agent (owner and creator)
+        if (_ownerOf(agentId) == msg.sender || agents[agentId].creator == msg.sender) {
             revert CannotRateOwnAgent(agentId);
         }
 
@@ -202,6 +219,26 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Update metadata URI for a registered agent
+     * @dev Only the current owner or original creator can update metadata
+     * @param agentId The token ID of the agent
+     * @param newMetadataURI The replacement metadata URI
+     */
+    function updateAgentMetadata(uint256 agentId, string memory newMetadataURI) external {
+        address owner = _ownerOf(agentId);
+        if (owner == address(0)) {
+            revert AgentNotFound(agentId);
+        }
+
+        if (msg.sender != owner && msg.sender != agents[agentId].creator) {
+            revert UnauthorizedMetadataUpdate(agentId, msg.sender);
+        }
+
+        agents[agentId].metadataURI = newMetadataURI;
+        emit AgentMetadataUpdated(agentId, msg.sender, newMetadataURI);
+    }
+
+    /**
      * @notice Check if an address has rated a specific agent
      * @param agentId The token ID of the agent
      * @param rater The address to check
@@ -227,5 +264,12 @@ contract TrustAgent is ERC721, Ownable, ReentrancyGuard {
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
         return agents[tokenId].metadataURI;
+    }
+
+    /**
+     * @notice Required override for AccessControl + ERC721 inheritance
+     */
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, AccessControl) returns (bool) {
+        return super.supportsInterface(interfaceId);
     }
 }

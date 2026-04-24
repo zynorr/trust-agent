@@ -20,6 +20,7 @@ contract TrustAgentTest is Test {
     event AgentRegistered(uint256 indexed agentId, address indexed creator, string metadataURI);
 
     event RatingSubmitted(uint256 indexed agentId, address indexed rater, uint8 rating, uint256 newAverage);
+    event AgentMetadataUpdated(uint256 indexed agentId, address indexed updatedBy, string newMetadataURI);
 
     function setUp() public {
         owner = address(this);
@@ -71,6 +72,21 @@ contract TrustAgentTest is Test {
     function test_RegisterAgent_RevertIfZeroAddress() public {
         vm.expectRevert();
         trustAgent.registerAgent(address(0), METADATA_URI);
+    }
+
+    function test_RegisterAgent_RevertIfCallerMissingRegistrarRole() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        trustAgent.registerAgent(agentOwner, METADATA_URI);
+    }
+
+    function test_RegisterAgent_WorksAfterGrantingRegistrarRole() public {
+        bytes32 registrarRole = trustAgent.REGISTRAR_ROLE();
+        trustAgent.grantRole(registrarRole, user1);
+
+        vm.prank(user1);
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        assertEq(agentId, 0);
     }
 
     // ============ Rating Tests ============
@@ -133,6 +149,12 @@ contract TrustAgentTest is Test {
         uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
 
         vm.prank(agentOwner);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.CannotRateOwnAgent.selector, agentId));
+        trustAgent.submitRating(agentId, 5);
+    }
+
+    function test_SubmitRating_PreventsCreatorFromRating() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
         vm.expectRevert(abi.encodeWithSelector(TrustAgent.CannotRateOwnAgent.selector, agentId));
         trustAgent.submitRating(agentId, 5);
     }
@@ -252,6 +274,36 @@ contract TrustAgentTest is Test {
 
         trustAgent.registerAgent(user1, "https://example.com/agent/2");
         assertEq(trustAgent.getTotalAgents(), 2);
+    }
+
+    function test_UpdateAgentMetadata_ByOwner() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        string memory newURI = "https://example.com/agent/updated-by-owner";
+
+        vm.expectEmit(true, true, false, true);
+        emit AgentMetadataUpdated(agentId, agentOwner, newURI);
+
+        vm.prank(agentOwner);
+        trustAgent.updateAgentMetadata(agentId, newURI);
+        assertEq(trustAgent.tokenURI(agentId), newURI);
+    }
+
+    function test_UpdateAgentMetadata_ByCreator() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        string memory newURI = "https://example.com/agent/updated-by-creator";
+
+        vm.expectEmit(true, true, false, true);
+        emit AgentMetadataUpdated(agentId, owner, newURI);
+
+        trustAgent.updateAgentMetadata(agentId, newURI);
+        assertEq(trustAgent.tokenURI(agentId), newURI);
+    }
+
+    function test_UpdateAgentMetadata_RevertIfUnauthorized() public {
+        uint256 agentId = trustAgent.registerAgent(agentOwner, METADATA_URI);
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(TrustAgent.UnauthorizedMetadataUpdate.selector, agentId, user1));
+        trustAgent.updateAgentMetadata(agentId, "https://example.com/agent/unauthorized");
     }
 
     // ============ Edge Cases ============
